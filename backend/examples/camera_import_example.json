@@ -1,0 +1,26 @@
+[
+  {
+    "id": "camera-example-1",
+    "name": "示例摄像头1",
+    "url": "rtsp://192.168.1.100:554/stream1",
+    "enabled": true,
+    "resolution": "1920x1080",
+    "fps": 30,
+    "brightness": 50,
+    "contrast": 50,
+    "status": "online",
+    "direction": "forward"
+  },
+  {
+    "id": "camera-example-2",
+    "name": "示例摄像头2",
+    "url": "rtsp://192.168.1.101:554/stream1",
+    "enabled": false,
+    "resolution": "1280x720",
+    "fps": 25,
+    "brightness": 45,
+    "contrast": 55,
+    "status": "offline",
+    "direction": "backward"
+  }
+]

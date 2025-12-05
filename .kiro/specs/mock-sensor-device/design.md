@@ -1,0 +1,334 @@
+# Design Document
+
+## Overview
+
+本设计文档描述了模拟传感器设备系统的架构和实现细节。该系统包含两个主要组件：
+1. **MockSensorDevice** - 模拟JY901传感器，生成加速度、角速度和角度数据
+2. **MotionDirectionProcessor** - 数据处理层，分析传感器数据并输出运动方向指令
+
+系统设计遵循现有的数据采集接口（IDataSource），确保与现有系统无缝集成。
+
+## Architecture
+
+系统采用分层架构：
+
+```
+┌─────────────────────────────────────┐
+│   Demo/Application Layer            │
+│   (example_mock_sensor.py)          │
+└──────────────┬──────────────────────┘
+               │
+┌──────────────▼──────────────────────┐
+│   Data Processing Layer              │
+│   (MotionDirectionProcessor)         │
+│   - 接收传感器数据                    │
+│   - 调用MotionDirectionCalculator    │
+│   - 输出运动指令                      │
+└──────────────┬──────────────────────┘
+               │
+┌──────────────▼──────────────────────┐
+│   Data Collection Layer              │
+│   (MockSensorDevice)                 │
+│   - 实现IDataSource接口               │
+│   - 生成模拟传感器数据                 │
+│   - 支持多种运动模式                   │
+└─────────────────────────────────────┘
+```
+
+## Components and Interfaces
+
+### 1. MockSensorDevice
+
+**位置**: `backend/src/collectors/sensors/mock_sensor.py`
+
+**职责**:
+- 生成模拟的IMU传感器数据
+- 实现IDataSource接口
+- 支持多种预定义运动模式
+- 提供可配置的数据生成参数
+
+**接口**:
+```python
+class MockSensorDevice(BaseSensorCollector):
+    def __init__(
+        self,
+        sensor_id: str,
+        motion_pattern: str = 'stationary',
+        config: Optional[Dict[str, Any]] = None
+    )
+    
+    async def connect(self) -> bool
+    async def disconnect(self) -> None
+    async def read_sensor_data(self) -> Dict[str, Any]
+    async def collect_stream(self) -> AsyncIterator[CollectedData]
+    def get_source_id(self) -> str
+    def set_motion_pattern(self, pattern: str) -> None
+```
+
+**配置参数**:
+- `motion_pattern`: 运动模式 ('forward', 'backward', 'turn_left', 'turn_right', 'stationary')
+- `interval`: 数据生成间隔（秒，默认0.1）
+- `noise_level`: 噪声标准差（默认0.01）
+
+### 2. MotionDirectionProcessor
+
+**位置**: `backend/src/collectors/processors/motion_processor.py`
+
+**职责**:
+- 接收传感器数据
+- 使用MotionDirectionCalculator分析数据
+- 输出标准化的运动指令
+- 提供运动状态信息
+
+**接口**:
+```python
+class MotionDirectionProcessor:
+    def __init__(self, config: Optional[Dict[str, Any]] = None)
+    
+    def process(self, sensor_data: Dict[str, Any]) -> MotionCommand
+    def get_motion_state(self) -> Dict[str, Any]
+    def reset(self) -> None
+```
+
+### 3. MotionCommand
+
+**位置**: `backend/src/collectors/models.py`
+
+**数据模型**:
+```python
+@dataclass
+class MotionCommand:
+    """运动指令"""
+    command: str  # 'forward', 'backward', 'turn_left', 'turn_right', 'stationary'
+    intensity: float  # 运动强度
+    angular_intensity: float  # 旋转强度
+    timestamp: datetime
+    is_motion_start: bool  # 是否是运动开始
+    raw_direction: str  # 原始方向字符串
+    metadata: Dict[str, Any]
+```
+
+## Data Models
+
+### Sensor Data Format
+
+模拟设备生成的数据格式与JY901传感器保持一致：
+
+```python
+{
+    '时间': '2025-12-05 10:30:45.123',
+    '设备名称': 'mock_sensor_01',
+    '加速度X(g)': 0.05,
+    '加速度Y(g)': 0.02,
+    '加速度Z(g)': -1.0,
+    '角速度X(°/s)': 0.5,
+    '角速度Y(°/s)': -0.3,
+    '角速度Z(°/s)': 10.2,
+    '角度X(°)': 2.5,
+    '角度Y(°)': -1.2,
+    '角度Z(°)': 45.8,
+    '温度(°C)': 25.0,
+    '电量(%)': 100.0
+}
+```
+
+### Motion Patterns
+
+每种运动模式对应特定的传感器数据特征：
+
+| 模式 | 加速度特征 | 角速度特征 | 角度特征 |
+|------|-----------|-----------|---------|
+| forward | X轴正向加速 (0.1~0.3g) | 微小波动 | 保持稳定 |
+| backward | X轴负向加速 (-0.3~-0.1g) | 微小波动 | 保持稳定 |
+| turn_left | 微小线性加速 | Z轴负向旋转 (-30~-10°/s) | Z轴角度递减 |
+| turn_right | 微小线性加速 | Z轴正向旋转 (10~30°/s) | Z轴角度递增 |
+| stationary | 仅重力加速度 (~-1g on Z) | 接近零 | 保持稳定 |
+
+
+## Correctness Properties
+
+*A property is a characteristic or behavior that should hold true across all valid executions of a system-essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees.*
+
+### Property 1: Sensor data range constraints
+
+*For any* generated sensor data, acceleration values SHALL be within [-16g, 16g], angular velocity values SHALL be within [-2000°/s, 2000°/s], and angle values SHALL be within [-180°, 180°] for all axes.
+
+**Validates: Requirements 1.2, 1.3, 1.4**
+
+### Property 2: Data generation timing
+
+*For any* configured data generation interval, the time between consecutive data emissions SHALL match the configured interval within a tolerance of ±10%.
+
+**Validates: Requirements 1.5**
+
+### Property 3: Motion pattern characteristics
+
+*For any* motion pattern configuration, the generated sensor data SHALL exhibit the characteristic signatures of that pattern:
+- forward: positive X-axis acceleration
+- backward: negative X-axis acceleration  
+- turn_left: negative Z-axis angular velocity
+- turn_right: positive Z-axis angular velocity
+- stationary: near-zero motion values (within noise threshold)
+
+**Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5**
+
+### Property 4: CollectedData format compliance
+
+*For any* data generated by MockSensorDevice, the output SHALL be formatted as CollectedData objects with required metadata fields (sensor_type, sensor_id, collection_time).
+
+**Validates: Requirements 3.1, 3.4**
+
+### Property 5: Source identifier consistency
+
+*For any* MockSensorDevice instance, calling get_source_id() SHALL always return the same sensor_id that was configured during initialization.
+
+**Validates: Requirements 3.3**
+
+### Property 6: Motion command mapping
+
+*For any* sensor data processed by MotionDirectionProcessor:
+- Data with forward acceleration SHALL produce "forward" command
+- Data with backward acceleration SHALL produce "backward" command
+- Data with left rotation SHALL produce "turn_left" command
+- Data with right rotation SHALL produce "turn_right" command
+- Data below motion thresholds SHALL produce "stationary" command
+
+**Validates: Requirements 4.1, 4.2, 4.3, 4.4, 4.5**
+
+### Property 7: Timestamp presence
+
+*For any* generated data point or calculation result, the output SHALL include a valid timestamp.
+
+**Validates: Requirements 5.4**
+
+### Property 8: MotionDirectionCalculator integration
+
+*For any* sensor data received by MotionDirectionProcessor, the processor SHALL invoke MotionDirectionCalculator.calculate_motion_direction and correctly extract the primary motion direction from the result.
+
+**Validates: Requirements 7.2, 7.3**
+
+### Property 9: Motion event propagation
+
+*For any* motion start event detected by MotionDirectionCalculator, the resulting MotionCommand SHALL have is_motion_start flag set to True.
+
+**Validates: Requirements 7.5**
+
+### Property 10: Direction string mapping
+
+*For any* direction string returned by MotionDirectionCalculator, the MotionDirectionProcessor SHALL map it to a standardized motion command string ('forward', 'backward', 'turn_left', 'turn_right', or 'stationary').
+
+**Validates: Requirements 7.4**
+
+## Error Handling
+
+### MockSensorDevice Errors
+
+1. **Configuration Errors**
+   - Invalid motion pattern → Log warning, default to 'stationary'
+   - Invalid interval value → Log warning, use default (0.1s)
+   - Invalid noise level → Log warning, use default (0.01)
+
+2. **Runtime Errors**
+   - Data generation failure → Yield CollectedData with status FAILED
+   - Thread synchronization issues → Log error, attempt recovery
+
+### MotionDirectionProcessor Errors
+
+1. **Input Validation Errors**
+   - Missing required sensor fields → Return stationary command with error metadata
+   - Invalid data types → Log error, skip processing
+
+2. **Calculator Errors**
+   - MotionDirectionCalculator exception → Catch, log, return stationary command
+   - Invalid calculator output → Log warning, use fallback logic
+
+### Error Recovery Strategy
+
+- Non-critical errors: Log and continue with degraded functionality
+- Critical errors: Stop data generation, clean up resources, notify caller
+- All errors: Include error information in metadata for debugging
+
+## Testing Strategy
+
+### Manual Testing Approach
+
+Since automated tests are not required, the system will be validated through manual testing:
+
+1. **Visual Inspection**
+   - Run demo script and observe console output
+   - Verify sensor data values are within expected ranges
+   - Confirm motion commands match configured patterns
+
+2. **Pattern Verification**
+   - Test each motion pattern (forward, backward, turn_left, turn_right, stationary)
+   - Verify sensor data characteristics match pattern definitions
+   - Confirm motion commands are correctly identified
+
+3. **Integration Testing**
+   - Verify MockSensorDevice integrates with existing IDataSource interface
+   - Confirm MotionDirectionCalculator is correctly invoked
+   - Test data flow from generation to motion command output
+
+4. **Edge Case Testing**
+   - Test with extreme configuration values
+   - Verify behavior at pattern transitions
+   - Test start/stop/restart sequences
+
+### Demo Script
+
+A demo script (`example_mock_sensor.py`) will be provided to:
+- Demonstrate all motion patterns
+- Display real-time sensor data and motion commands
+- Allow interactive pattern switching
+- Show timing and performance metrics
+
+## Implementation Notes
+
+### Thread Safety
+
+- MockSensorDevice uses threading for continuous data generation
+- Use threading.Lock for shared state access
+- Ensure clean shutdown of background threads
+
+### Performance Considerations
+
+- Default interval (0.1s) provides 10Hz data rate
+- Noise generation uses numpy for efficiency
+- Avoid blocking operations in data generation loop
+
+### Integration Points
+
+1. **Existing Interfaces**
+   - Extends BaseSensorCollector
+   - Implements IDataSource interface
+   - Uses CollectedData model
+
+2. **Existing Components**
+   - Imports MotionDirectionCalculator from datahandler.algorithms
+   - Uses CollectionStatus enum
+   - Compatible with existing sensor infrastructure
+
+### Configuration Examples
+
+```python
+# Forward motion with low noise
+config = {
+    'motion_pattern': 'forward',
+    'interval': 0.1,
+    'noise_level': 0.01
+}
+
+# Turn right with higher noise
+config = {
+    'motion_pattern': 'turn_right',
+    'interval': 0.05,
+    'noise_level': 0.05
+}
+
+# Stationary (testing baseline)
+config = {
+    'motion_pattern': 'stationary',
+    'interval': 0.1,
+    'noise_level': 0.001
+}
+```

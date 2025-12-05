@@ -1,0 +1,25 @@
+appId: com.vision.security
+productName: Vision Security Monitor
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+mac:
+  category: public.app-category.utilities
+  target:
+    - dmg
+    - zip
+win:
+  target:
+    - nsis
+    - portable
+linux:
+  target:
+    - target: tar.gz
+      arch:
+        - arm64
+        - x64
+  category: Utility
