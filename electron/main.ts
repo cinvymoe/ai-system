@@ -309,19 +309,17 @@ app.whenReady().then(() => {
   // 设置 IPC 处理器
   setupIPC();
   
-  // 配置session以允许WebSocket连接
+  // 配置session以允许WebSocket连接和blob URLs
   const { session } = require('electron');
   session.defaultSession.webRequest.onHeadersReceived((details: any, callback: any) => {
+    const csp = isDev 
+      ? "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *; connect-src *; img-src * data: blob:; media-src * blob:; style-src 'self' 'unsafe-inline' *; script-src 'self' 'unsafe-inline' 'unsafe-eval' *;"
+      : "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src 'self' ws://localhost:* http://localhost:* ws://127.0.0.1:* http://127.0.0.1:* ws://0.0.0.0:* http://0.0.0.0:*; img-src 'self' data: blob: http: https:; media-src 'self' blob: http: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval';";
+    
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        'Content-Security-Policy': [
-          "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; " +
-          "connect-src 'self' ws://localhost:* http://localhost:* ws://127.0.0.1:* http://127.0.0.1:* ws://0.0.0.0:* http://0.0.0.0:*; " +
-          "img-src 'self' data: blob: https:; " +
-          "style-src 'self' 'unsafe-inline'; " +
-          "script-src 'self' 'unsafe-inline' 'unsafe-eval';"
-        ]
+        'Content-Security-Policy': [csp]
       }
     });
   });

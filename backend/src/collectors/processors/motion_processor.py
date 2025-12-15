@@ -3,6 +3,7 @@ Motion Direction Processor
 
 数据处理层，分析传感器数据并输出运动方向指令。
 使用 MotionDirectionCalculator 进行运动分析。
+集成消息代理，发布方向处理结果。
 """
 
 import logging
@@ -11,6 +12,14 @@ from typing import Any, Dict, Optional
 
 from datahandler.algorithms.MotionDirectionCalculator import MotionDirectionCalculator
 from ..models import MotionCommand
+try:
+    from ...broker.broker import MessageBroker
+except ImportError:
+    # Fallback for when running tests directly
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from broker.broker import MessageBroker
 
 
 # 配置日志
@@ -139,6 +148,9 @@ class MotionDirectionProcessor:
             
             # 更新运动状态
             self._update_motion_state(motion_command)
+            
+            # 发布方向消息到消息代理
+            self._publish_direction_message(motion_command)
             
             return motion_command
             
@@ -312,6 +324,53 @@ class MotionDirectionProcessor:
             Dict[str, Any]: 运动状态信息
         """
         return self.last_motion_state.copy()
+    
+    def _publish_direction_message(self, motion_command: MotionCommand) -> None:
+        """
+        发布方向消息到消息代理
+        
+        实现要求：
+        - Requirements 2.1: 发布方向处理结果
+        - Requirements 2.3: 通知所有方向订阅者
+        
+        Args:
+            motion_command: 运动指令对象
+        """
+        try:
+            # 获取消息代理实例（如果未初始化会自动创建）
+            broker = MessageBroker.get_instance()
+            
+            # 准备符合 DirectionMessageHandler 要求的消息数据
+            message_data = {
+                'command': motion_command.command,
+                'timestamp': motion_command.timestamp.isoformat(),
+                'intensity': motion_command.intensity,
+                'angular_intensity': motion_command.angular_intensity,
+                # 可选的元数据
+                'is_motion_start': motion_command.is_motion_start,
+                'raw_direction': motion_command.raw_direction,
+                'metadata': motion_command.metadata
+            }
+            
+            # 发布方向消息
+            result = broker.publish('direction_result', message_data)
+            
+            if result.success:
+                logger.debug(
+                    f"Direction message published successfully: {result.message_id}, "
+                    f"notified {result.subscribers_notified} subscribers"
+                )
+            else:
+                logger.warning(
+                    f"Failed to publish direction message: {result.errors}"
+                )
+                
+        except Exception as e:
+            # 发布失败不应影响主要处理流程
+            logger.error(
+                f"Error publishing direction message: {e}",
+                exc_info=True
+            )
     
     def reset(self) -> None:
         """

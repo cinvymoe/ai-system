@@ -70,14 +70,16 @@ class BaseSensorCollector(IDataSource, ABC):
             
             collected_data = CollectedData(
                 source_id=self.sensor_id,
-                data=raw_data,
+                timestamp=datetime.now(),
+                data_format='json',
+                collection_method='sensor',
+                raw_data=str(raw_data).encode('utf-8'),
                 metadata={
                     'sensor_type': self.sensor_type,
                     'sensor_id': self.sensor_id,
                     'collection_time': datetime.now().isoformat(),
-                },
-                timestamp=datetime.now(),
-                status=CollectionStatus.SUCCESS
+                    'data': raw_data,
+                }
             )
             
             yield collected_data
@@ -85,14 +87,16 @@ class BaseSensorCollector(IDataSource, ABC):
         except Exception as e:
             yield CollectedData(
                 source_id=self.sensor_id,
-                data={},
+                timestamp=datetime.now(),
+                data_format='json',
+                collection_method='sensor',
+                raw_data=b'{}',
                 metadata={
                     'sensor_type': self.sensor_type,
                     'sensor_id': self.sensor_id,
                     'error': str(e),
-                },
-                timestamp=datetime.now(),
-                status=CollectionStatus.FAILED
+                    'data': {},
+                }
             )
     
     async def validate(self) -> bool:

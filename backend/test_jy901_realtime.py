@@ -19,7 +19,7 @@ def get_default_port():
     """获取默认串口"""
     system = platform.system().lower()
     if system == 'linux':
-        return '/dev/ttyUSB0'
+        return '/dev/ttyACM0'
     elif system == 'windows':
         return 'COM3'
     else:

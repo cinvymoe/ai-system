@@ -63,5 +63,9 @@
       // Disable auto-open in browser when running with Electron
       open: process.env.ELECTRON !== 'true',
       strictPort: true,
+      // Add CSP headers for development
+      headers: {
+        'Content-Security-Policy': "default-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self' ws://localhost:* http://localhost:* ws://127.0.0.1:* http://127.0.0.1:*; img-src 'self' data: blob: http: https:; media-src 'self' blob: http: https:;"
+      }
     },
   });

@@ -208,45 +208,7 @@ class JY901Sensor(BaseSensorCollector):
         else:
             raise ValueError(f"不支持的模式: {self.mode}")
     
-    async def collect_stream(self) -> AsyncIterator[CollectedData]:
-        """
-        采集数据流（实现 IDataSource 接口）
-        
-        Yields:
-            CollectedData: 持续采集的数据
-        """
-        if not self._is_connected:
-            await self.connect()
-        
-        while self._is_connected and self.is_running:
-            try:
-                raw_data = await self.read_sensor_data()
-                
-                yield CollectedData(
-                    source_id=self.sensor_id,
-                    data=raw_data,
-                    metadata={
-                        'sensor_type': self.sensor_type,
-                        'sensor_id': self.sensor_id,
-                        'collection_time': datetime.now().isoformat(),
-                    },
-                    timestamp=datetime.now(),
-                    status=CollectionStatus.SUCCESS
-                )
-                
-            except Exception as e:
-                yield CollectedData(
-                    source_id=self.sensor_id,
-                    data={},
-                    metadata={
-                        'sensor_type': self.sensor_type,
-                        'sensor_id': self.sensor_id,
-                        'error': str(e),
-                    },
-                    timestamp=datetime.now(),
-                    status=CollectionStatus.FAILED
-                )
-                break
+
     
     def get_source_id(self) -> str:
         """
@@ -501,8 +463,71 @@ class JY901Sensor(BaseSensorCollector):
         Yields:
             CollectedData: 持续采集的数据
         """
-        async for data in self.collect():
-            yield data
+        if not self._is_connected:
+            await self.connect()
+        
+        # 启动数据采集线程（仅实时模式需要）
+        if self.mode == 'realtime' and not self.is_running:
+            self.is_running = True
+            self.read_thread = threading.Thread(
+                target=self._serial_read_loop,
+                daemon=True
+            )
+            self.read_thread.start()
+            
+            # 等待线程启动和初始数据
+            await asyncio.sleep(1)
+        
+        last_data_time = None
+        
+        while self._is_connected and self.is_running:
+            try:
+                # 获取当前数据
+                with self.data_lock:
+                    current_data = self.current_data.copy() if self.current_data else {}
+                
+                # 检查是否有新数据
+                if current_data:
+                    current_time = datetime.now()
+                    
+                    # 如果是新数据或者距离上次发送超过一定时间，则发送
+                    if (last_data_time is None or 
+                        (current_time - last_data_time).total_seconds() >= 0.5):
+                        
+                        yield CollectedData(
+                            source_id=self.sensor_id,
+                            timestamp=current_time,
+                            data_format='json',
+                            collection_method='sensor',
+                            raw_data=str(current_data).encode('utf-8'),
+                            metadata={
+                                'sensor_type': self.sensor_type,
+                                'sensor_id': self.sensor_id,
+                                'collection_time': current_time.isoformat(),
+                                'data': current_data,
+                            }
+                        )
+                        
+                        last_data_time = current_time
+                
+                # 等待一段时间再检查新数据
+                await asyncio.sleep(0.1)
+                
+            except Exception as e:
+                yield CollectedData(
+                    source_id=self.sensor_id,
+                    timestamp=datetime.now(),
+                    data_format='json',
+                    collection_method='sensor',
+                    raw_data=b'{}',
+                    metadata={
+                        'sensor_type': self.sensor_type,
+                        'sensor_id': self.sensor_id,
+                        'error': str(e),
+                        'data': {},
+                    }
+                )
+                break
     
     def get_source_id(self) -> str:
         """

@@ -11,11 +11,13 @@ from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 try:
-    from collectors.sensors.mock_sensor import MockSensorDevice
+    from collectors.sensors.jy901 import JY901Sensor
     from collectors.processors.motion_processor import MotionDirectionProcessor
+    from broker.broker import MessageBroker
 except ImportError:
-    from src.collectors.sensors.mock_sensor import MockSensorDevice
+    from src.collectors.sensors.jy901 import JY901Sensor
     from src.collectors.processors.motion_processor import MotionDirectionProcessor
+    from src.broker.broker import MessageBroker
 
 
 # 配置日志
@@ -25,17 +27,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sensor", tags=["sensors"])
 
 # 全局传感器设备实例
-_sensor_device: Optional[MockSensorDevice] = None
+_sensor_device: Optional[JY901Sensor] = None
 _sensor_lock = asyncio.Lock()
 
 
 @router.websocket("/stream")
 async def sensor_stream_websocket(websocket: WebSocket):
     """
-    WebSocket端点，推送实时传感器数据和运动指令
+    WebSocket端点，推送实时JY901传感器数据和运动指令
     
     连接后自动开始推送数据流，包括：
-    - sensor_data: 原始传感器数据（加速度、角速度、角度等）
+    - sensor_data: JY901九轴传感器数据（加速度、角速度、角度、温度、电量等）
     - motion_command: 处理后的运动指令
     
     消息格式：
@@ -44,6 +46,8 @@ async def sensor_stream_websocket(websocket: WebSocket):
         "timestamp": "ISO格式时间戳",
         "data": { ... }
     }
+    
+    JY901传感器通过串口 /dev/ttyACM0 连接，波特率 9600
     """
     global _sensor_device
     
@@ -55,7 +59,7 @@ async def sensor_stream_websocket(websocket: WebSocket):
         logger.error(f"✗ WebSocket接受失败: {e}")
         raise
     
-    # 创建MockSensorDevice和MotionDirectionProcessor
+    # 创建JY901Sensor和MotionDirectionProcessor
     sensor_device = None
     processor = None
     
@@ -63,16 +67,17 @@ async def sensor_stream_websocket(websocket: WebSocket):
         # 使用锁保护全局传感器设备的创建
         async with _sensor_lock:
             if _sensor_device is None:
-                _sensor_device = MockSensorDevice(
-                    sensor_id="mock_sensor_ws",
-                    motion_pattern="sequence",  # 自动按序列切换运动模式
+                _sensor_device = JY901Sensor(
+                    sensor_id="jy901_sensor_ws",
                     config={
-                        'interval': 0.1,  # 10Hz
-                        'noise_level': 0.01,
+                        'mode': 'realtime',  # 使用实时模式
+                        'port': '/dev/ttyACM0',  # JY901传感器串口
+                        'baudrate': 9600,
+                        'timeout': 1.0,
                     }
                 )
                 await _sensor_device.connect()
-                logger.info("MockSensorDevice已创建并连接")
+                logger.info("JY901Sensor已创建并连接")
             
             sensor_device = _sensor_device
         
@@ -86,13 +91,33 @@ async def sensor_stream_websocket(websocket: WebSocket):
         })
         logger.info("MotionDirectionProcessor已创建")
         
+        # 等待传感器初始化和数据准备
+        logger.info("等待JY901传感器数据准备...")
+        await asyncio.sleep(2)  # 给传感器2秒时间准备数据
+        
         # 订阅数据流
         async for collected_data in sensor_device.collect_stream():
             try:
-                # 解析传感器数据
-                raw_data_str = collected_data.raw_data.decode('utf-8')
-                logger.debug(f"收到原始数据: {raw_data_str[:100]}...")  # 只记录前100个字符
-                sensor_data = json.loads(raw_data_str)
+                # 从JY901传感器获取数据
+                # JY901传感器的数据在metadata['data']中
+                sensor_data = collected_data.metadata.get('data', {})
+                logger.debug(f"收到JY901传感器数据: {list(sensor_data.keys())}")  # 记录数据字段
+                
+                # 检查是否有必需的传感器数据
+                if not sensor_data:
+                    logger.warning("传感器数据为空，等待数据...")
+                    await asyncio.sleep(0.1)  # 短暂等待
+                    continue
+                
+                # 检查必需字段是否存在
+                required_fields = ['加速度X(g)', '加速度Y(g)', '加速度Z(g)']
+                missing_fields = [field for field in required_fields if field not in sensor_data]
+                if missing_fields:
+                    logger.warning(f"传感器数据缺少字段: {missing_fields}，当前字段: {list(sensor_data.keys())}")
+                    await asyncio.sleep(0.1)  # 短暂等待
+                    continue
+                
+                logger.debug(f"处理完整的传感器数据: {sensor_data}")
                 
                 # 发送传感器数据消息
                 sensor_message = {
@@ -120,6 +145,25 @@ async def sensor_stream_websocket(websocket: WebSocket):
                 }
                 await websocket.send_json(sensor_message)
                 
+                # 发布角度消息到消息代理
+                # Requirements 3.1, 3.3: 发布角度值数据供其他模块订阅
+                try:
+                    broker = MessageBroker.get_instance()
+                    angle_z = sensor_data.get('角度Z(°)', 0.0)
+                    
+                    # 发布角度消息，格式符合 AngleMessageHandler 要求
+                    broker.publish("angle_value", {
+                        "angle": float(angle_z),
+                        "timestamp": collected_data.timestamp.isoformat()
+                    })
+                    
+                    logger.debug(f"Published angle message: {angle_z}°")
+                    
+                except Exception as broker_error:
+                    # 消息代理错误不应影响 WebSocket 数据流
+                    logger.error(f"Failed to publish angle message to broker: {broker_error}")
+                    # 继续处理，不中断 WebSocket 流
+                
                 # 处理数据生成运动指令
                 motion_command = processor.process(sensor_data)
                 
@@ -137,16 +181,16 @@ async def sensor_stream_websocket(websocket: WebSocket):
                 }
                 await websocket.send_json(motion_message)
                 
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON解析错误: {e}")
-                logger.error(f"原始数据: {collected_data.raw_data}")
+            except KeyError as e:
+                logger.error(f"传感器数据字段缺失: {e}")
+                logger.error(f"可用字段: {list(sensor_data.keys())}")
                 try:
                     error_message = {
                         "type": "error",
                         "timestamp": collected_data.timestamp.isoformat(),
                         "data": {
-                            "error": f"数据解析失败: {str(e)}",
-                            "raw_data": collected_data.raw_data.decode('utf-8', errors='replace')[:200]
+                            "error": f"传感器数据字段缺失: {str(e)}",
+                            "available_fields": list(sensor_data.keys())
                         }
                     }
                     await websocket.send_json(error_message)
