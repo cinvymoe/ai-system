@@ -20,6 +20,8 @@ try:
     from broker.handlers import DirectionMessageHandler, AngleMessageHandler, AIAlertMessageHandler
     from broker.data_manager import DataManager, ManagedMessage
     from database import get_db
+    from collectors.sensors.jy901 import JY901Sensor
+    from collectors.processors.motion_processor import MotionDirectionProcessor
 except ImportError:
     from src.broker.broker import MessageBroker
     from src.broker.models import MessageData, CameraInfo
@@ -27,6 +29,8 @@ except ImportError:
     from src.broker.handlers import DirectionMessageHandler, AngleMessageHandler, AIAlertMessageHandler
     from src.broker.data_manager import DataManager, ManagedMessage
     from src.database import get_db
+    from src.collectors.sensors.jy901 import JY901Sensor
+    from src.collectors.processors.motion_processor import MotionDirectionProcessor
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -44,6 +48,12 @@ _init_lock = asyncio.Lock()
 
 # 全局 DataManager 实例
 _data_manager: Optional[DataManager] = None
+
+# 全局传感器设备实例
+_sensor_device: Optional[JY901Sensor] = None
+_sensor_lock = asyncio.Lock()
+_sensor_task: Optional[asyncio.Task] = None
+_sensor_running = False
 
 
 async def _initialize_broker():
@@ -146,6 +156,187 @@ async def _get_cameras_for_message(message: MessageData) -> List[CameraInfo]:
         return []
 
 
+async def _get_cameras_details(camera_ids: List[str]) -> List[Dict[str, Any]]:
+    """
+    根据摄像头 ID 列表获取完整的摄像头信息
+    
+    Args:
+        camera_ids: 摄像头 ID 列表
+        
+    Returns:
+        List[Dict]: 包含 id, name, url, status, directions 的摄像头信息列表
+    """
+    try:
+        # 导入 Camera 模型
+        try:
+            from models.camera import Camera
+        except ImportError:
+            from src.models.camera import Camera
+        
+        # 获取数据库会话
+        db = next(get_db())
+        
+        try:
+            # 查询摄像头信息
+            cameras = db.query(Camera).filter(Camera.id.in_(camera_ids)).all()
+            
+            # 转换为字典列表
+            cameras_info = []
+            for camera in cameras:
+                cameras_info.append({
+                    "id": camera.id,
+                    "name": camera.name,
+                    "url": camera.url,
+                    "status": camera.status,
+                    "directions": camera.directions or []
+                })
+            
+            return cameras_info
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Error getting camera details: {e}", exc_info=True)
+        # 降级处理：返回只包含 ID 的列表
+        return [{"id": camera_id} for camera_id in camera_ids]
+
+
+async def _start_sensor_stream():
+    """启动传感器数据流，自动发布到 MessageBroker"""
+    global _sensor_device, _sensor_running
+    
+    try:
+        # 使用锁保护全局传感器设备的创建
+        async with _sensor_lock:
+            if _sensor_device is None:
+                _sensor_device = JY901Sensor(
+                    sensor_id="jy901_sensor_broker",
+                    config={
+                        'mode': 'realtime',
+                        'port': '/dev/ttyACM0',
+                        'baudrate': 9600,
+                        'timeout': 1.0,
+                    }
+                )
+                await _sensor_device.connect()
+                logger.info("JY901 传感器已创建并连接（用于 broker）")
+        
+        _sensor_running = True
+        logger.info("传感器数据流已启动")
+        
+        # 等待传感器初始化
+        await asyncio.sleep(2)
+        
+        # 获取 MessageBroker 实例
+        broker = MessageBroker.get_instance()
+        
+        # 创建运动方向处理器
+        processor = MotionDirectionProcessor(config={
+            'motion_threshold': 0.005,
+            'angular_threshold': 2.0,
+            'direction_threshold': 0.002,
+            'rotation_threshold': 5.0,
+            'velocity_threshold': 0.0005,
+        })
+        
+        # 持续采集并发布数据
+        async for collected_data in _sensor_device.collect_stream():
+            if not _sensor_running:
+                logger.info("传感器数据流停止标志已设置，退出循环")
+                break
+            
+            try:
+                sensor_data = collected_data.metadata.get('data', {})
+                
+                if not sensor_data:
+                    await asyncio.sleep(0.1)
+                    continue
+                
+                # 检查必需字段
+                required_fields = ['加速度X(g)', '加速度Y(g)', '加速度Z(g)']
+                if not all(field in sensor_data for field in required_fields):
+                    await asyncio.sleep(0.1)
+                    continue
+                
+                # 发布角度消息到 MessageBroker
+                angle_z = sensor_data.get('角度Z(°)', 0.0)
+                broker.publish("angle_value", {
+                    "angle": float(angle_z),
+                    "timestamp": collected_data.timestamp.isoformat()
+                })
+                
+                # 处理运动指令并发布
+                motion_command = processor.process(sensor_data)
+                if motion_command.command != "idle":
+                    broker.publish("direction_result", {
+                        "command": motion_command.command,
+                        "intensity": float(motion_command.intensity),
+                        "timestamp": motion_command.timestamp.isoformat()
+                    })
+                
+                logger.debug(f"发布传感器数据: 角度={angle_z}°, 指令={motion_command.command}")
+                
+            except Exception as e:
+                logger.error(f"处理传感器数据时出错: {e}", exc_info=True)
+                await asyncio.sleep(0.1)
+                
+    except asyncio.CancelledError:
+        logger.info("传感器数据流任务被取消")
+        raise
+    except Exception as e:
+        logger.error(f"传感器数据流错误: {e}", exc_info=True)
+    finally:
+        _sensor_running = False
+        logger.info("传感器数据流已停止")
+
+
+async def _ensure_sensor_stream_running():
+    """确保传感器数据流正在运行"""
+    global _sensor_task, _sensor_running
+    
+    if _sensor_task is None or _sensor_task.done():
+        logger.info("启动新的传感器数据流任务")
+        _sensor_task = asyncio.create_task(_start_sensor_stream())
+    elif _sensor_running:
+        logger.info("传感器数据流已在运行")
+    else:
+        logger.warning("传感器任务存在但未运行，重新启动")
+        _sensor_task = asyncio.create_task(_start_sensor_stream())
+
+
+async def _stop_sensor_stream():
+    """停止传感器数据流"""
+    global _sensor_task, _sensor_running, _sensor_device
+    
+    logger.info("正在停止传感器数据流...")
+    
+    # 设置停止标志
+    _sensor_running = False
+    
+    # 取消任务
+    if _sensor_task and not _sensor_task.done():
+        _sensor_task.cancel()
+        try:
+            await _sensor_task
+        except asyncio.CancelledError:
+            logger.info("传感器任务已取消")
+    
+    # 断开传感器连接
+    async with _sensor_lock:
+        if _sensor_device:
+            try:
+                await _sensor_device.disconnect()
+                logger.info("传感器设备已断开连接")
+            except Exception as e:
+                logger.error(f"断开传感器连接时出错: {e}")
+            finally:
+                _sensor_device = None
+    
+    _sensor_task = None
+    logger.info("传感器数据流已完全停止")
+
+
 @router.websocket("/stream")
 async def broker_stream(websocket: WebSocket):
     """
@@ -183,6 +374,9 @@ async def broker_stream(websocket: WebSocket):
         # 确保 broker 已初始化
         await _initialize_broker()
         
+        # 确保传感器数据流正在运行
+        await _ensure_sensor_stream_running()
+        
         # 接受WebSocket连接
         await websocket.accept()
         
@@ -198,15 +392,7 @@ async def broker_stream(websocket: WebSocket):
             """处理 DataManager 发送的消息"""
             try:
                 # 获取摄像头详细信息
-                broker = MessageBroker.get_instance()
-                camera_mapper = broker._camera_mapper
-                
-                cameras_info = []
-                if camera_mapper:
-                    for camera_id in managed_msg.cameras:
-                        # 这里可以从数据库获取摄像头详细信息
-                        # 简化处理：直接使用 ID
-                        cameras_info.append({"id": camera_id})
+                cameras_info = await _get_cameras_details(managed_msg.cameras)
                 
                 # 构建响应消息
                 response = {
@@ -295,6 +481,11 @@ async def broker_stream(websocket: WebSocket):
             remaining_count = _active_connections
         
         logger.info(f"WebSocket connection cleanup complete for {websocket.client} (remaining: {remaining_count})")
+        
+        # 如果没有活跃连接了，停止传感器数据流
+        if remaining_count == 0:
+            await _stop_sensor_stream()
+            logger.info("所有客户端已断开，传感器数据流已停止")
 
 
 async def _send_current_state(websocket: WebSocket):

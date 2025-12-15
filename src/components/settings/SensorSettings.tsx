@@ -1,9 +1,10 @@
 import { ArrowLeft, Compass, Activity, RotateCw, CheckCircle2, ArrowUp, ArrowDown, ArrowLeft as ArrowLeftIcon, ArrowRight, Wifi, WifiOff, AlertCircle, Clock } from 'lucide-react';
 import { Direction } from '../../App';
 import { Switch } from '../ui/switch';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSensorStream } from '../../hooks/useSensorStream';
 import { formatNumber, getMotionLabel, getMotionColorScheme, formatTimestamp } from '../../utils/sensorDataFormatter';
+import axios from 'axios';
 
 interface SensorSettingsProps {
   onBack: () => void;
@@ -24,6 +25,22 @@ export function SensorSettings({ onBack, currentDirection }: SensorSettingsProps
     lastUpdateTime,
     isDelayed,
   } = useSensorStream({ autoConnect: true });
+
+  // 组件卸载时关闭串口和停止线程
+  useEffect(() => {
+    return () => {
+      // 清理函数：组件离开时调用后端API停止传感器
+      const stopSensor = async () => {
+        try {
+          await axios.post('http://127.0.0.1:8000/api/sensor/stop');
+          console.log('[SensorSettings] 传感器已停止');
+        } catch (err) {
+          console.error('[SensorSettings] 停止传感器失败:', err);
+        }
+      };
+      stopSensor();
+    };
+  }, []);
 
   // 运动方向图标映射
   const directionIcons = {

@@ -33,8 +33,8 @@ class RTSPStreamService:
             是否成功启动
         """
         if stream_id in self.active_streams:
-            logger.warning(f"Stream {stream_id} already exists")
-            return False
+            logger.info(f"Stream {stream_id} already exists, reusing existing capture")
+            return True
             
         try:
             # 使用 RTSCapture 创建实时流捕获

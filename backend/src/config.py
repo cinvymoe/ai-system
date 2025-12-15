@@ -11,7 +11,7 @@ class Settings:
     
     # Camera monitoring settings
     CAMERA_CHECK_INTERVAL_MINUTES: int = int(os.getenv("CAMERA_CHECK_INTERVAL_MINUTES", "5"))
-    CAMERA_CHECK_TIMEOUT_SECONDS: int = int(os.getenv("CAMERA_CHECK_TIMEOUT_SECONDS", "5"))
+    CAMERA_CHECK_TIMEOUT_SECONDS: int = int(os.getenv("CAMERA_CHECK_TIMEOUT_SECONDS", "1"))
     ENABLE_AUTO_MONITORING: bool = os.getenv("ENABLE_AUTO_MONITORING", "true").lower() == "true"
     
     # API settings

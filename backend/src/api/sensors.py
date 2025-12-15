@@ -227,3 +227,28 @@ async def sensor_stream_websocket(websocket: WebSocket):
     finally:
         # 清理资源（保持传感器设备运行以支持多个客户端）
         logger.info("WebSocket连接已关闭")
+
+
+@router.post("/stop")
+async def stop_sensor():
+    """
+    停止传感器数据采集，关闭串口连接
+    
+    用于在离开传感器设置页面时清理资源
+    """
+    global _sensor_device
+    
+    try:
+        async with _sensor_lock:
+            if _sensor_device is not None:
+                logger.info("正在停止传感器设备...")
+                await _sensor_device.disconnect()
+                _sensor_device = None
+                logger.info("✓ 传感器设备已停止，串口已关闭")
+                return {"status": "success", "message": "传感器已停止"}
+            else:
+                logger.info("传感器设备未运行")
+                return {"status": "success", "message": "传感器未运行"}
+    except Exception as e:
+        logger.error(f"✗ 停止传感器失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"停止传感器失败: {str(e)}")

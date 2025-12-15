@@ -65,7 +65,7 @@ async def start_stream(request: RTSPStreamRequest):
 @router.post("/streams/stop/{stream_id}", response_model=RTSPStreamResponse)
 async def stop_stream(stream_id: str):
     """
-    停止 RTSP 流
+    停止 RTSP 流的 WebSocket 连接（不清理 capture）
     
     Args:
         stream_id: 流标识符
@@ -73,27 +73,73 @@ async def stop_stream(stream_id: str):
     Returns:
         操作结果
     """
-    success = rtsp_service.stop_stream(stream_id)
-    
-    # 关闭所有相关的 WebSocket 连接
+    # 只关闭所有相关的 WebSocket 连接，不清理 capture
     if stream_id in active_connections:
         for ws in list(active_connections[stream_id]):
             try:
                 await ws.close()
-            except:
-                pass
-        del active_connections[stream_id]
+            except Exception as e:
+                logger.warning(f"Error closing WebSocket for stream {stream_id}: {e}")
+        try:
+            del active_connections[stream_id]
+        except KeyError:
+            logger.warning(f"Stream {stream_id} already removed from active_connections")
+        
+        logger.info(f"Closed WebSocket connections for stream {stream_id}, capture remains active")
+        return RTSPStreamResponse(
+            success=True,
+            message=f"WebSocket connections for stream {stream_id} closed successfully",
+            stream_id=stream_id
+        )
+    else:
+        # 没有活动连接
+        logger.warning(f"No active WebSocket connections for stream {stream_id}")
+        return RTSPStreamResponse(
+            success=True,
+            message=f"No active connections for stream {stream_id}",
+            stream_id=stream_id
+        )
+
+
+@router.post("/streams/cleanup/{stream_id}", response_model=RTSPStreamResponse)
+async def cleanup_stream(stream_id: str):
+    """
+    清理 RTSP 流（关闭 WebSocket 并释放 capture）
+    
+    Args:
+        stream_id: 流标识符
+        
+    Returns:
+        操作结果
+    """
+    # 先关闭所有 WebSocket 连接
+    if stream_id in active_connections:
+        for ws in list(active_connections[stream_id]):
+            try:
+                await ws.close()
+            except Exception as e:
+                logger.warning(f"Error closing WebSocket for stream {stream_id}: {e}")
+        try:
+            del active_connections[stream_id]
+        except KeyError:
+            logger.warning(f"Stream {stream_id} already removed from active_connections")
+    
+    # 清理 capture
+    success = rtsp_service.stop_stream(stream_id)
     
     if success:
         return RTSPStreamResponse(
             success=True,
-            message=f"Stream {stream_id} stopped successfully",
+            message=f"Stream {stream_id} cleaned up successfully",
             stream_id=stream_id
         )
     else:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Stream {stream_id} not found"
+        # 即使流不存在，也返回成功（幂等性）
+        logger.warning(f"Stream {stream_id} not found, but returning success for idempotency")
+        return RTSPStreamResponse(
+            success=True,
+            message=f"Stream {stream_id} already cleaned up or not found",
+            stream_id=stream_id
         )
 
 
