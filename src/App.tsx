@@ -188,22 +188,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // 模拟报警
-  useEffect(() => {
-    const alertInterval = setInterval(() => {
-      if (Math.random() > 0.7) {
-        const newAlert: Alert = {
-          id: Date.now().toString(),
-          type: Math.random() > 0.5 ? 'intrusion' : 'tracking',
-          message: Math.random() > 0.5 ? '检测到人员入侵' : 'AI目标追踪激活',
-          timestamp: new Date()
-        };
-        setAlerts(prev => [newAlert, ...prev].slice(0, 5));
-      }
-    }, 8000);
 
-    return () => clearInterval(alertInterval);
-  }, []);
 
   const handleViewChange = (view: SettingsView) => {
     setCurrentView(view);
@@ -360,7 +345,19 @@ export default function App() {
           </div>
         );
       default:
-        return <MainCamera direction={currentDirection} activeCameraId={activeCameraId} />;
+        return <MainCamera 
+          direction={currentDirection} 
+          activeCameraId={activeCameraId} 
+          onAlert={(alert) => {
+            const newAlert = {
+              id: Date.now().toString(),
+              type: alert.type,
+              message: alert.message,
+              timestamp: new Date()
+            };
+            setAlerts([newAlert]); // 只保留一个警报
+          }}
+        />;
     }
   };
 

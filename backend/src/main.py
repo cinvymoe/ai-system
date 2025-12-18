@@ -2,7 +2,11 @@
 """Main entry point for the vision security backend."""
 
 import sys
+import os
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Add parent directory to path for datahandler module
 parent_dir = Path(__file__).parent.parent.parent
@@ -26,6 +30,7 @@ try:
     from api.ai_settings import router as ai_settings_router
     from api.broker import router as broker_router
     from api.rtsp import router as rtsp_router
+    from api.person_detection import router as person_detection_router
 except ImportError:
     from src.api.cameras import router as cameras_router
     from src.api.angle_ranges import router as angle_ranges_router
@@ -33,11 +38,14 @@ except ImportError:
     from src.api.ai_settings import router as ai_settings_router
     from src.api.broker import router as broker_router
     from src.api.rtsp import router as rtsp_router
+    from src.api.person_detection import router as person_detection_router
 
 try:
     from scheduler.camera_monitor import get_camera_monitor
+    from scheduler.person_detector import get_person_detection_monitor
 except ImportError:
     from src.scheduler.camera_monitor import get_camera_monitor
+    from src.scheduler.person_detector import get_person_detection_monitor
 
 try:
     from config import settings
@@ -71,6 +79,9 @@ async def lifespan(app: FastAPI):
         log_file=None  # Can be made configurable via env var
     )
     
+    # Suppress APScheduler job execution logs
+    logging.getLogger('apscheduler.executors.default').setLevel(logging.WARNING)
+    
     # Startup: Initialize database
     init_db()
     
@@ -84,12 +95,38 @@ async def lifespan(app: FastAPI):
         monitor = get_camera_monitor(check_interval_minutes=settings.CAMERA_CHECK_INTERVAL_MINUTES)
         monitor.start()
     
+    # Start person detection monitor if model path is configured
+    person_detection_model = settings.PERSON_DETECTION_MODEL_PATH
+    person_detection_interval = int(os.getenv('PERSON_DETECTION_INTERVAL_SECONDS', '1'))
+    
+    if person_detection_model :
+        try:
+            detection_monitor = get_person_detection_monitor(
+                model_path=person_detection_model,
+                check_interval_seconds=person_detection_interval
+            )
+            detection_monitor.start()
+            logger.info(f"Person detection monitor started with model: {person_detection_model}")
+        except Exception as e:
+            logger.error(f"Failed to start person detection monitor: {e}")
+    else:
+        logger.info("Person detection monitor not started (model path not configured or not found)")
+    
     yield
     
     # Shutdown: Stop camera monitor if it was started
     if settings.ENABLE_AUTO_MONITORING:
         monitor = get_camera_monitor()
         monitor.stop()
+    
+    # Shutdown: Stop person detection monitor if it was started
+    try:
+        from src.scheduler.person_detector import _detection_monitor_instance
+        if _detection_monitor_instance is not None:
+            _detection_monitor_instance.stop()
+            logger.info("Person detection monitor stopped")
+    except Exception as e:
+        logger.error(f"Error stopping person detection monitor: {e}")
     
     # Shutdown message broker
     broker.shutdown()
@@ -109,6 +146,7 @@ app.include_router(sensors_router)
 app.include_router(ai_settings_router)
 app.include_router(broker_router)
 app.include_router(rtsp_router)
+app.include_router(person_detection_router)
 
 # Add CORS middleware to support frontend cross-origin requests
 app.add_middleware(

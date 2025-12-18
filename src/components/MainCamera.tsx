@@ -5,6 +5,7 @@ import { Direction } from '../App';
 interface MainCameraProps {
   direction: Direction;
   activeCameraId: string;
+  onAlert?: (alert: { type: 'intrusion' | 'tracking' | 'system'; message: string }) => void;
 }
 
 interface CameraInfo {
@@ -44,6 +45,7 @@ const directionColors: Record<Direction, string> = {
 const BROKER_WS_URL = 'ws://127.0.0.1:8000/api/broker/stream';
 const RTSP_API_BASE = 'http://127.0.0.1:8000/rtsp';
 const RTSP_WS_BASE = 'ws://127.0.0.1:8000/rtsp';
+const PERSON_DETECTION_WS_BASE = 'ws://127.0.0.1:8000/api/person-detection';
 
 // 多摄像头流状态
 interface CameraStream {
@@ -54,7 +56,7 @@ interface CameraStream {
   error: string | null;
 }
 
-export function MainCamera({ direction: propDirection }: MainCameraProps) {
+export function MainCamera({ direction: propDirection, onAlert }: MainCameraProps) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [frameCount, setFrameCount] = useState(0);
@@ -65,6 +67,9 @@ export function MainCamera({ direction: propDirection }: MainCameraProps) {
   const [direction, setDirection] = useState<Direction>(propDirection);
   const [cameraStreams, setCameraStreams] = useState<Map<string, CameraStream>>(new Map());
   const [currentAngle, setCurrentAngle] = useState<number | null>(null);
+  const [isAlertMode, setIsAlertMode] = useState(false); // AI报警模式状态
+  const [alertCamera, setAlertCamera] = useState<CameraInfo | null>(null); // 报警摄像头
+
   
   const imgRef = useRef<HTMLImageElement>(null);
   const rtspWsRef = useRef<WebSocket | null>(null);
@@ -74,6 +79,9 @@ export function MainCamera({ direction: propDirection }: MainCameraProps) {
   const currentCameraIdRef = useRef<string | null>(null); // 跟踪当前摄像头 ID
   const pendingCameraRef = useRef<CameraInfo | null>(null); // 保存待恢复的摄像头
   const cameraStreamsRef = useRef<Map<string, CameraStream>>(new Map());
+  const alertWsRef = useRef<WebSocket | null>(null); // AI报警WebSocket连接
+  const isAlertModeRef = useRef<boolean>(false); // 跟踪AI报警模式状态（用于闭包中访问最新值）
+  const alertCameraRef = useRef<CameraInfo | null>(null); // 跟踪报警摄像头（用于闭包中访问最新值）
 
   // 启动多个摄像头流
   const startMultipleStreams = async (cameras: CameraInfo[]) => {
@@ -188,6 +196,102 @@ export function MainCamera({ direction: propDirection }: MainCameraProps) {
     
     cameraStreamsRef.current.clear();
     setCameraStreams(new Map());
+  };
+
+  // 停止AI报警流
+  const stopAlertStream = async () => {
+    if (alertWsRef.current) {
+      alertWsRef.current.close();
+      alertWsRef.current = null;
+    }
+    
+    isAlertModeRef.current = false; // 同步更新 ref
+    alertCameraRef.current = null;
+    setIsAlertMode(false);
+    setAlertCamera(null);
+    setIsStreaming(false);
+    setFrameCount(0);
+    setFps(0);
+    console.log('AI报警流已停止');
+  };
+
+  // 启动AI报警流
+  const startAlertStream = async (camera: CameraInfo) => {
+    // 使用 ref 检查是否已经是相同摄像头的AI报警流（避免闭包问题）
+    if (isAlertModeRef.current && alertCameraRef.current?.id === camera.id && alertWsRef.current?.readyState === WebSocket.OPEN) {
+      console.log(`AI报警流已在运行: ${camera.name} (${camera.id})`);
+      return;
+    }
+    
+    // 只有在不同摄像头或连接断开时才停止现有报警流
+    if (isAlertModeRef.current && (alertCameraRef.current?.id !== camera.id || alertWsRef.current?.readyState !== WebSocket.OPEN)) {
+      await stopAlertStream();
+    }
+    
+    console.log(`启动AI报警流: ${camera.name} (${camera.id})`);
+
+    // 同步更新 ref（在状态更新之前）
+    alertCameraRef.current = camera;
+    setAlertCamera(camera);
+    
+    try {
+      // 直接连接人员检测WebSocket端点
+      const ws = new WebSocket(`${PERSON_DETECTION_WS_BASE}/ws/${camera.id}`);
+      alertWsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log(`AI报警WebSocket已连接: ${camera.name}`);
+        setIsStreaming(true);
+      };
+
+      ws.onmessage = (event) => {
+        if (event.data instanceof Blob && imgRef.current) {
+          // 接收到带有人员检测标注的图像帧
+          const url = URL.createObjectURL(event.data);
+          
+          if (imgRef.current.src.startsWith('blob:')) {
+            URL.revokeObjectURL(imgRef.current.src);
+          }
+          imgRef.current.src = url;
+          
+          // 更新帧数和 FPS
+          setFrameCount((prev: number) => prev + 1);
+          fpsCounterRef.current.count++;
+          
+          const now = Date.now();
+          if (now - fpsCounterRef.current.lastTime >= 1000) {
+            setFps(fpsCounterRef.current.count);
+            fpsCounterRef.current.count = 0;
+            fpsCounterRef.current.lastTime = now;
+          }
+        } else {
+          // JSON 消息 - 检测信息
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'detection') {
+              console.log(`检测信息: 人数=${msg.person_count}, 时间=${msg.timestamp}`);
+            } else if (msg.type === 'error') {
+              console.error('AI报警流错误:', msg.message);
+            }
+          } catch (e) {
+            console.error('解析AI报警消息失败:', e);
+          }
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('AI报警WebSocket错误:', error);
+      };
+
+      ws.onclose = () => {
+        console.log('AI报警WebSocket已断开');
+        setIsStreaming(false);
+      };
+      
+    } catch (error) {
+      console.error('启动AI报警流失败:', error);
+      setAlertCamera(null);
+    }
   };
 
   // 停止当前 RTSP 流
@@ -357,6 +461,74 @@ export function MainCamera({ direction: propDirection }: MainCameraProps) {
             setCurrentAngle(null);
           }
 
+          // 处理 AI 警报
+          if (message.type === 'ai_alert') {
+            console.log('收到 AI 警报:', message);
+            if (message.data && onAlert) {
+              const { alert_type, camera_name, person_count, confidence, camera_id } = message.data;
+              
+              // 发送警报到父组件，只弹出AlertPanel
+              let alertMessage = '';
+              if (alert_type === 'person_detected') {
+                alertMessage = `检测到 ${person_count} 人入侵 - 摄像头: ${camera_name || '未知'} (置信度: ${Math.round((confidence || 0) * 100)}%)`;
+              } else {
+                alertMessage = `AI 检测警报 - ${alert_type}`;
+              }
+              
+              onAlert({
+                type: 'intrusion',
+                message: alertMessage
+              });
+
+              // 启动AI报警单画面显示 - 直接播放不需要检测摄像头
+              if (camera_id) {
+                console.log(`AI报警触发单画面显示: ${camera_name || camera_id}`);
+                
+                // 创建临时摄像头信息用于AI报警显示
+                const alertCameraInfo = {
+                  id: camera_id,
+                  name: camera_name || `摄像头_${camera_id}`,
+                  url: `rtsp://camera_${camera_id}`, // 临时URL，实际不使用
+                  status: 'online',
+                  directions: []
+                };
+                
+                // 使用 ref 检查当前是否已经是相同摄像头的AI报警模式（避免闭包问题）
+                if (isAlertModeRef.current && alertCameraRef.current?.id === camera_id) {
+                  console.log('当前已是相同摄像头的AI报警模式，无需切换');
+                  return;
+                }
+                
+                // 停止现有流并启动AI报警流
+                console.log('当前isAlertMode (ref):', isAlertModeRef.current);
+                
+                // 停止当前的多摄像头流
+                if (cameraStreamsRef.current.size > 0) {
+                  await stopMultipleStreams();
+                }
+                
+                // 停止当前的单摄像头流
+                if (currentStreamIdRef.current) {
+                  await stopCurrentStream();
+                }
+
+                // 同步更新 ref（在状态更新之前，确保后续检查能立即生效）
+                isAlertModeRef.current = true;
+                setIsAlertMode(true);
+                console.log('设置isAlertMode为true (ref已同步更新)');
+
+                // 启动AI报警流
+                startAlertStream(alertCameraInfo);
+              }
+            }
+          } else if (message.type === 'camera_switch' || message.type === 'stream_end') {
+            // 只在明确的摄像头切换或流结束消息时退出AI报警模式（使用 ref 检查）
+            if (isAlertModeRef.current) {
+              console.log('收到摄像头切换/流结束消息，退出报警模式:', message.type);
+              await stopAlertStream();
+            }
+          }
+
           // 解析角度值
           if (message.data && typeof message.data.angle !== 'undefined') {
             const angle = parseFloat(message.data.angle);
@@ -377,6 +549,12 @@ export function MainCamera({ direction: propDirection }: MainCameraProps) {
             console.log('当前状态:', message);
           } else if (message.cameras && message.cameras.length > 0) {
             setActiveCameras(message.cameras);
+            
+            // 如果当前处于AI报警模式，不切换摄像头（使用 ref 检查）
+            if (isAlertModeRef.current) {
+              console.log('当前处于AI报警模式，不切换摄像头');
+              return;
+            }
             
             // 根据摄像头数量选择显示模式
             if (message.cameras.length > 1) {
@@ -449,6 +627,11 @@ export function MainCamera({ direction: propDirection }: MainCameraProps) {
         brokerWsRef.current = null;
       }
       
+      // 清理AI报警流
+      stopAlertStream().catch(err => {
+        console.error('清理AI报警流时出错:', err);
+      });
+      
       // 清理单摄像头 RTSP 流
       stopCurrentStream().catch(err => {
         console.error('清理 RTSP 流时出错:', err);
@@ -505,12 +688,43 @@ export function MainCamera({ direction: propDirection }: MainCameraProps) {
 
   // 判断是否为多摄像头模式
   const isMultiCameraMode = cameraStreams.size > 1;
+  
+  // 判断当前显示模式
+  const getDisplayMode = () => {
+    if (isAlertMode) return 'alert';
+    if (isMultiCameraMode) return 'multi';
+    return 'single';
+  };
+  
+  const displayMode = getDisplayMode();
 
   return (
     <div className="h-full w-full bg-slate-900 relative">
       {/* 主摄像头画面 */}
       <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-        {isMultiCameraMode ? (
+        {displayMode === 'alert' ? (
+          // AI报警单画面显示
+          <>
+            {alertCamera && (
+              <img 
+                ref={imgRef}
+                alt={`AI报警 - ${alertCamera.name}`}
+                className="w-full h-full object-contain"
+              />
+            )}
+            
+            {/* AI报警模式标识 */}
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-950/90 backdrop-blur-md border-2 border-red-500/50 rounded-lg px-6 py-3 shadow-xl">
+              <div className="flex items-center gap-3">
+                <div className="size-3 rounded-full bg-red-500 animate-pulse shadow-lg shadow-red-500/50"></div>
+                <span className="text-red-400 font-mono font-bold">AI 报警模式</span>
+                {alertCamera && (
+                  <span className="text-red-300 font-mono">- {alertCamera.name}</span>
+                )}
+              </div>
+            </div>
+          </>
+        ) : displayMode === 'multi' ? (
           // 多摄像头网格显示（2x2）
           <div className="w-full h-full grid grid-cols-2 grid-rows-2 gap-2 p-4">
             {Array.from(cameraStreams.values()).map((stream, index) => (
@@ -576,27 +790,8 @@ export function MainCamera({ direction: propDirection }: MainCameraProps) {
         )}
 
         {/* 单摄像头模式下的装饰元素 */}
-        {!isMultiCameraMode && (
+        {displayMode === 'single' && (
           <>
-            {/* AI检测框示例 */}
-            <div className="absolute top-1/4 left-1/3 w-48 h-64 border-2 border-red-500 shadow-lg shadow-red-500/30 animate-pulse">
-              <div className="bg-gradient-to-r from-red-600 to-red-500 text-white px-3 py-1.5 text-sm font-mono -mt-8 shadow-lg">
-                ⚠️ 人员检测
-              </div>
-              <div className="absolute top-2 right-2 bg-red-500/90 backdrop-blur-sm text-white px-2 py-1 rounded text-xs font-mono">
-                95%
-              </div>
-            </div>
-
-            <div className="absolute top-1/2 right-1/4 w-32 h-32 border-2 border-green-500 shadow-lg shadow-green-500/30">
-              <div className="bg-gradient-to-r from-green-600 to-green-500 text-white px-3 py-1.5 text-sm font-mono -mt-8 shadow-lg">
-                🎯 设备追踪
-              </div>
-              <div className="absolute top-2 right-2 bg-green-500/90 backdrop-blur-sm text-white px-2 py-1 rounded text-xs font-mono">
-                87%
-              </div>
-            </div>
-
             {/* 网格线 */}
             <svg className="absolute inset-0 w-full h-full opacity-10 pointer-events-none">
               <defs>
@@ -619,14 +814,14 @@ export function MainCamera({ direction: propDirection }: MainCameraProps) {
             <div className="absolute bottom-4 right-4 w-12 h-12 border-r-2 border-b-2 border-cyan-500/50"></div>
           </>
         )}
+
+
       </div>
 
       {/* 状态信息叠加层 */}
       <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-start">
         {/* 左侧信息 */}
         <div className="space-y-3">
-          
-
           {/* Broker 连接状态 */}
           <div className="bg-slate-950/90 backdrop-blur-md border-2 border-cyan-500/30 rounded-lg px-4 py-3 shadow-xl">
             <div className="flex items-center gap-3">
@@ -670,7 +865,22 @@ export function MainCamera({ direction: propDirection }: MainCameraProps) {
         <div className="bg-slate-950/90 backdrop-blur-md border-2 border-cyan-500/30 rounded-lg px-6 py-3 shadow-xl">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-8">
-              {isMultiCameraMode ? (
+              {displayMode === 'alert' ? (
+                <>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 font-mono">显示模式:</span>
+                    <span className="text-red-400 font-mono">AI报警模式</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 font-mono">帧率:</span>
+                    <span className="text-red-400 font-mono">{fps} FPS</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 font-mono">总帧数:</span>
+                    <span className="text-red-400 font-mono">{frameCount}</span>
+                  </div>
+                </>
+              ) : displayMode === 'multi' ? (
                 <>
                   <div className="flex items-center gap-2">
                     <span className="text-slate-400 font-mono">显示模式:</span>
@@ -679,7 +889,7 @@ export function MainCamera({ direction: propDirection }: MainCameraProps) {
                   <div className="flex items-center gap-2">
                     <span className="text-slate-400 font-mono">在线:</span>
                     <span className="text-green-400 font-mono">
-                      {Array.from(cameraStreams.values()).filter(s => s.isStreaming).length}/{cameraStreams.size}
+                      {Array.from(cameraStreams.values()).filter((s: any) => s.isStreaming).length}/{cameraStreams.size}
                     </span>
                   </div>
                 </>
@@ -702,17 +912,23 @@ export function MainCamera({ direction: propDirection }: MainCameraProps) {
             </div>
             <div className="flex items-center gap-3">
               <div className={`size-2 rounded-full shadow-lg ${
-                isMultiCameraMode 
-                  ? (Array.from(cameraStreams.values()).some(s => s.isStreaming) ? 'bg-green-500 animate-pulse shadow-green-500/50' : 'bg-yellow-500 animate-pulse shadow-yellow-500/50')
+                displayMode === 'alert' 
+                  ? 'bg-red-500 animate-pulse shadow-red-500/50'
+                  : displayMode === 'multi'
+                  ? (Array.from(cameraStreams.values()).some((s: any) => s.isStreaming) ? 'bg-green-500 animate-pulse shadow-green-500/50' : 'bg-yellow-500 animate-pulse shadow-yellow-500/50')
                   : (isStreaming ? 'bg-green-500 animate-pulse shadow-green-500/50' : 'bg-yellow-500 animate-pulse shadow-yellow-500/50')
               }`}></div>
               <span className={`font-mono ${
-                isMultiCameraMode
-                  ? (Array.from(cameraStreams.values()).some(s => s.isStreaming) ? 'text-green-400' : 'text-yellow-400')
+                displayMode === 'alert'
+                  ? 'text-red-400'
+                  : displayMode === 'multi'
+                  ? (Array.from(cameraStreams.values()).some((s: any) => s.isStreaming) ? 'text-green-400' : 'text-yellow-400')
                   : (isStreaming ? 'text-green-400' : 'text-yellow-400')
               }`}>
-                {isMultiCameraMode
-                  ? (Array.from(cameraStreams.values()).some(s => s.isStreaming) ? '多摄像头运行中' : '等待连接')
+                {displayMode === 'alert'
+                  ? 'AI报警监控中'
+                  : displayMode === 'multi'
+                  ? (Array.from(cameraStreams.values()).some((s: any) => s.isStreaming) ? '多摄像头运行中' : '等待连接')
                   : (isStreaming ? '系统运行正常' : '等待视频流连接')
                 }
               </span>

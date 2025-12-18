@@ -218,7 +218,14 @@ class DataManager:
         def callback(message: MessageData):
             """消息回调（同步）"""
             # 将同步回调转换为异步任务
-            asyncio.create_task(self._handle_message(message))
+            try:
+                loop = asyncio.get_running_loop()
+                asyncio.create_task(self._handle_message(message))
+            except RuntimeError:
+                # No running event loop, create a new one
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(self._handle_message(message))
         
         return callback
     
@@ -290,7 +297,7 @@ class DataManager:
         判断是否应该发送新消息
         
         规则：
-        0. 如果摄像头列表为空，不发送
+        0. 如果摄像头列表为空且消息不为ai_alert，不发送
         1. 如果没有当前消息，发送
         2. 如果当前消息已过期，发送
         3. 如果新消息与当前消息相同（去重），不发送
@@ -303,11 +310,11 @@ class DataManager:
         Returns:
             bool: 是否应该发送
         """
-        # 检查摄像头列表是否为空
-        if not new_msg.cameras:
+        # 检查摄像头列表是否为空且消息不为ai_alert
+        if not new_msg.cameras and new_msg.message_type != "ai_alert":
             self._stats["messages_no_cameras"] += 1
             logger.debug(
-                f"Message has no cameras, not sending: "
+                f"Message has no cameras and is not ai_alert, not sending: "
                 f"type={new_msg.message_type}, id={new_msg.message_id}"
             )
             return False
@@ -393,13 +400,11 @@ class DataManager:
     
     async def _restart_timer(self) -> None:
         """重启消息过期定时器"""
-        # 取消现有定时器
-        if self._timer_task and not self._timer_task.done():
-            self._timer_task.cancel()
-            try:
-                await self._timer_task
-            except asyncio.CancelledError:
-                pass
+        # 取消现有定时器（如果存在）
+        if self._timer_task:
+            if not self._timer_task.done():
+                self._timer_task.cancel()
+            self._timer_task = None
         
         # 启动新定时器
         self._timer_task = asyncio.create_task(self._timer_expired())
@@ -421,8 +426,14 @@ class DataManager:
                     
         except asyncio.CancelledError:
             logger.debug("Timer cancelled")
+            # 重新抛出 CancelledError 以确保任务正确完成
+            raise
         except Exception as e:
             logger.error(f"Error in timer: {e}", exc_info=True)
+        finally:
+            # 确保在任务完成时清理引用
+            if self._timer_task and self._timer_task == asyncio.current_task():
+                self._timer_task = None
     
     async def _get_cameras_for_message(self, message: MessageData) -> List[CameraInfo]:
         """
@@ -453,12 +464,10 @@ class DataManager:
         
         async with self._lock:
             # 取消定时器
-            if self._timer_task and not self._timer_task.done():
-                self._timer_task.cancel()
-                try:
-                    await self._timer_task
-                except asyncio.CancelledError:
-                    pass
+            if self._timer_task:
+                if not self._timer_task.done():
+                    self._timer_task.cancel()
+                self._timer_task = None
             
             # 取消所有订阅
             if self._broker:

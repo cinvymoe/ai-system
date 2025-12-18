@@ -1,5 +1,5 @@
 import { X, Lock, User } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 
 interface LoginDialogProps {
   isOpen: boolean;
@@ -11,10 +11,13 @@ export function LoginDialog({ isOpen, onClose, onLogin }: LoginDialogProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  
+  // 使用 ref 来避免不必要的重新渲染
+  const usernameRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
-  if (!isOpen) return null;
-
-  const handleSubmit = (e: React.FormEvent) => {
+  // 使用 useCallback 优化事件处理函数
+  const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     
@@ -26,20 +29,43 @@ export function LoginDialog({ isOpen, onClose, onLogin }: LoginDialogProps) {
     } else {
       setError('用户名或密码错误');
     }
-  };
+  }, [username, password, onLogin, onClose]);
 
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     setUsername('');
     setPassword('');
     setError('');
     onClose();
-  };
+  }, [onClose]);
+
+  // 优化输入处理函数
+  const handleUsernameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setUsername(e.target.value);
+  }, []);
+
+  const handlePasswordChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setPassword(e.target.value);
+  }, []);
+
+  // 使用 useMemo 缓存样式类名
+  const inputClassName = useMemo(() => 
+    "w-full pl-10 pr-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-colors",
+    []
+  );
+
+  // 缓存按钮样式
+  const buttonStyles = useMemo(() => ({
+    cancel: "flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors",
+    submit: "flex-1 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg transition-colors"
+  }), []);
+
+  if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-900 border-2 border-cyan-500/30 rounded-xl shadow-2xl shadow-cyan-500/20 w-full max-w-md">
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+      <div className="bg-slate-900 border border-cyan-500/50 rounded-lg shadow-xl w-full max-w-md">
         {/* 标题栏 */}
-        <div className="border-b border-slate-700 px-6 py-4 flex items-center justify-between bg-slate-950/50">
+        <div className="border-b border-slate-700 px-6 py-4 flex items-center justify-between bg-slate-800">
           <div className="flex items-center gap-3">
             <Lock className="size-5 text-cyan-500" />
             <h2 className="text-cyan-400 tracking-wide">管理员登录</h2>
@@ -66,12 +92,14 @@ export function LoginDialog({ isOpen, onClose, onLogin }: LoginDialogProps) {
             <div className="relative">
               <User className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-slate-500" />
               <input
+                ref={usernameRef}
                 type="text"
                 value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                onChange={handleUsernameChange}
                 placeholder="请输入用户名"
-                className="w-full pl-10 pr-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                className={inputClassName}
                 autoFocus
+                autoComplete="username"
               />
             </div>
           </div>
@@ -82,11 +110,13 @@ export function LoginDialog({ isOpen, onClose, onLogin }: LoginDialogProps) {
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-slate-500" />
               <input
+                ref={passwordRef}
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={handlePasswordChange}
                 placeholder="请输入密码"
-                className="w-full pl-10 pr-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                className={inputClassName}
+                autoComplete="current-password"
               />
             </div>
           </div>
@@ -102,13 +132,13 @@ export function LoginDialog({ isOpen, onClose, onLogin }: LoginDialogProps) {
             <button
               type="button"
               onClick={handleClose}
-              className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors"
+              className={buttonStyles.cancel}
             >
               取消
             </button>
             <button
               type="submit"
-              className="flex-1 px-4 py-2 bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-700 hover:to-cyan-600 text-white rounded-lg transition-all shadow-lg shadow-cyan-500/30 border border-cyan-400/50"
+              className={buttonStyles.submit}
             >
               登录
             </button>

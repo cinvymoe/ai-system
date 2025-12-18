@@ -47,7 +47,7 @@ export function AlertPanel({ alerts, onClearAlert }: AlertPanelProps) {
     });
 
     return () => timers.forEach(clearInterval);
-  }, [alerts.length]);
+  }, [alerts]);
 
   if (alertsWithTimers.length === 0) return null;
 
@@ -91,7 +91,7 @@ export function AlertPanel({ alerts, onClearAlert }: AlertPanelProps) {
   const getAlertTitle = (type: Alert['type']) => {
     switch (type) {
       case 'intrusion':
-        return '⚠️ 入侵警报';
+        return ' 入侵警报';
       case 'tracking':
         return '🎯 目标追踪';
       default:

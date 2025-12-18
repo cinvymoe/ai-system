@@ -10,6 +10,20 @@ import { IPCResponse } from './types';
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:3000';
 
+// 启用详细日志输出
+if (process.argv.includes('--enable-logging') || isDev) {
+  console.log('[Main] Electron logging enabled');
+  console.log('[Main] Process arguments:', process.argv);
+  console.log('[Main] Environment:', {
+    NODE_ENV: process.env.NODE_ENV,
+    isDev,
+    isPackaged: app.isPackaged,
+    version: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch
+  });
+}
+
 let mainWindow: BrowserWindow | null = null;
 
 /**

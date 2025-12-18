@@ -17,6 +17,8 @@ rsync -avz --progress \
   --exclude='.env' \
   --exclude='data/' \
   --exclude='backups/' \
+  --exclude='.python-version' \
+  --exclude='.pyproject.toml' \
   backend/ cat@192.168.1.128:/home/cat/backend/
 
 echo "2.      "
@@ -27,7 +29,6 @@ rsync -avz --progress \
   --exclude='*.pyc' \
   --exclude='.env' \
   --exclude='data/' \
-  --exclude='backups/' \
   datahandler/ cat@192.168.1.128:/home/cat/datahandler/
 
 # Target 2: Local release folder
