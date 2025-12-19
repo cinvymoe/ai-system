@@ -16,6 +16,7 @@ export interface Point {
  */
 export interface AISettings {
   id: number;
+  enabled: boolean;
   camera_id: string | null;
   camera_name: string | null;
   camera_url: string | null;
@@ -34,6 +35,7 @@ export interface AISettings {
  * 创建 AI 设置数据
  */
 export interface AISettingsCreate {
+  enabled?: boolean;
   camera_id?: string | null;
   confidence_threshold?: number;
   danger_zone?: Point[] | null;
@@ -48,6 +50,7 @@ export interface AISettingsCreate {
  * 更新 AI 设置数据
  */
 export interface AISettingsUpdate {
+  enabled?: boolean;
   camera_id?: string | null;
   confidence_threshold?: number;
   danger_zone?: Point[] | null;

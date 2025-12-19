@@ -81,7 +81,9 @@ def main():
         if ai_settings:
             print("\nAI Settings List:")
             for i, settings in enumerate(ai_settings, 1):
+                enabled_icon = "✓" if settings.enabled else "✗"
                 print(f"  {i}. AI 设置 ID: {settings.id}")
+                print(f"     启用: {enabled_icon}")
                 
                 # 摄像头绑定信息
                 if settings.camera_id:

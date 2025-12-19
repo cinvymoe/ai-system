@@ -197,6 +197,11 @@ class PersonDetectionMonitor:
                     logger.info("No camera bound in AI settings, skipping detection")
                     return
                 
+                # 检查 AI 检测是否启用
+                if not ai_settings.enabled:
+                    logger.info("AI detection is disabled in settings, skipping detection")
+                    return
+                
                 repository = CameraRepository(db)
                 service = CameraService(repository)
                 camera = service.get_camera_by_id(ai_settings.camera_id)

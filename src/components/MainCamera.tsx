@@ -46,6 +46,7 @@ const BROKER_WS_URL = 'ws://127.0.0.1:8000/api/broker/stream';
 const RTSP_API_BASE = 'http://127.0.0.1:8000/rtsp';
 const RTSP_WS_BASE = 'ws://127.0.0.1:8000/rtsp';
 const PERSON_DETECTION_WS_BASE = 'ws://127.0.0.1:8000/api/person-detection';
+const PERSON_DETECTION_API_BASE = 'http://127.0.0.1:8000/api/person-detection';
 
 // 多摄像头流状态
 interface CameraStream {
@@ -418,9 +419,50 @@ export function MainCamera({ direction: propDirection, onAlert }: MainCameraProp
 
 
 
+  // 启动人员检测监控
+  const startPersonDetectionMonitor = async () => {
+    try {
+      const response = await fetch(`${PERSON_DETECTION_API_BASE}/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ check_interval_seconds: 1 })
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        console.log('人员检测监控已启动:', result);
+      } else {
+        console.error('启动人员检测监控失败:', await response.text());
+      }
+    } catch (error) {
+      console.error('启动人员检测监控出错:', error);
+    }
+  };
+
+  // 停止人员检测监控
+  const stopPersonDetectionMonitor = async () => {
+    try {
+      const response = await fetch(`${PERSON_DETECTION_API_BASE}/stop`, {
+        method: 'POST'
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        console.log('人员检测监控已停止:', result);
+      } else {
+        console.error('停止人员检测监控失败:', await response.text());
+      }
+    } catch (error) {
+      console.error('停止人员检测监控出错:', error);
+    }
+  };
+
   // 组件挂载时连接 Broker WebSocket，卸载时清理
   useEffect(() => {
     let isUnmounting = false;
+
+    // 启动人员检测监控
+    startPersonDetectionMonitor();
 
     // 修改 connectBrokerWebSocket 以支持取消重连
     const connectWithCleanup = () => {
@@ -620,6 +662,11 @@ export function MainCamera({ direction: propDirection, onAlert }: MainCameraProp
     return () => {
       console.log('MainCamera 组件卸载，清理资源...');
       isUnmounting = true;
+      
+      // 停止人员检测监控
+      stopPersonDetectionMonitor().catch(err => {
+        console.error('停止人员检测监控时出错:', err);
+      });
       
       // 清理 Broker WebSocket
       if (brokerWsRef.current) {

@@ -16,6 +16,9 @@ class AISettings(Base):
     # Primary key
     id = Column(Integer, primary_key=True, autoincrement=True)
     
+    # 启用状态
+    enabled = Column(Boolean, default=True)  # 是否启用AI检测
+    
     # 摄像头绑定
     camera_id = Column(String, nullable=True)  # 绑定的摄像头ID
     camera_name = Column(String, nullable=True)  # 摄像头名称（冗余字段，便于查询）

@@ -1,4 +1,4 @@
-import { ArrowLeft, Brain, AlertTriangle, CheckCircle2, Camera, ChevronDown, Save } from 'lucide-react';
+import { ArrowLeft, Brain, AlertTriangle, CheckCircle2, Camera, ChevronDown, Save, Power } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { Switch } from '../ui/switch';
 import { Slider } from '../ui/slider';
@@ -12,6 +12,7 @@ interface AISettingsProps {
 export function AISettings({ onBack }: AISettingsProps) {
   // AI 设置状态
   const [settingsId, setSettingsId] = useState<number | null>(null);
+  const [enabled, setEnabled] = useState(true);
   const [confidence, setConfidence] = useState(75);
   const [soundAlarm, setSoundAlarm] = useState(true);
   const [visualAlarm, setVisualAlarm] = useState(true);
@@ -40,6 +41,7 @@ export function AISettings({ onBack }: AISettingsProps) {
     try {
       const settings = await aiSettingsService.getSettings();
       setSettingsId(settings.id);
+      setEnabled(settings.enabled);
       setConfidence(settings.confidence_threshold);
       setSoundAlarm(settings.sound_alarm);
       setVisualAlarm(settings.visual_alarm);
@@ -83,6 +85,7 @@ export function AISettings({ onBack }: AISettingsProps) {
     setIsSaving(true);
     try {
       await aiSettingsService.updateSettings(settingsId, {
+        enabled: enabled,
         camera_id: selectedCameraId || null,
         confidence_threshold: confidence,
         sound_alarm: soundAlarm,
@@ -130,6 +133,14 @@ export function AISettings({ onBack }: AISettingsProps) {
             </button>
             <Brain className="size-5 text-cyan-500" />
             <h2 className="text-slate-100">AI识别设置</h2>
+            {/* AI 开启/关闭按钮 */}
+            <div className="flex items-center gap-2 ml-4 px-3 py-1.5 bg-slate-800 rounded-lg border border-slate-600">
+              <Power className={`size-4 ${enabled ? 'text-green-500' : 'text-slate-500'}`} />
+              <span className={`text-sm ${enabled ? 'text-green-500' : 'text-slate-400'}`}>
+                {enabled ? '已开启' : '已关闭'}
+              </span>
+              <Switch checked={enabled} onCheckedChange={setEnabled} />
+            </div>
           </div>
           
           {/* 保存消息 */}

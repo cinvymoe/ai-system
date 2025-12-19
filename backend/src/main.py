@@ -95,22 +95,9 @@ async def lifespan(app: FastAPI):
         monitor = get_camera_monitor(check_interval_minutes=settings.CAMERA_CHECK_INTERVAL_MINUTES)
         monitor.start()
     
-    # Start person detection monitor if model path is configured
-    person_detection_model = settings.PERSON_DETECTION_MODEL_PATH
-    person_detection_interval = int(os.getenv('PERSON_DETECTION_INTERVAL_SECONDS', '1'))
-    
-    if person_detection_model :
-        try:
-            detection_monitor = get_person_detection_monitor(
-                model_path=person_detection_model,
-                check_interval_seconds=person_detection_interval
-            )
-            detection_monitor.start()
-            logger.info(f"Person detection monitor started with model: {person_detection_model}")
-        except Exception as e:
-            logger.error(f"Failed to start person detection monitor: {e}")
-    else:
-        logger.info("Person detection monitor not started (model path not configured or not found)")
+    # Person detection monitor is now started/stopped via API endpoints
+    # when MainCamera component mounts/unmounts
+    logger.info("Person detection monitor will be started via /api/person-detection/start endpoint")
     
     yield
     
@@ -121,7 +108,10 @@ async def lifespan(app: FastAPI):
     
     # Shutdown: Stop person detection monitor if it was started
     try:
-        from src.scheduler.person_detector import _detection_monitor_instance
+        try:
+            from scheduler.detection.factory import _detection_monitor_instance
+        except ImportError:
+            from src.scheduler.detection.factory import _detection_monitor_instance
         if _detection_monitor_instance is not None:
             _detection_monitor_instance.stop()
             logger.info("Person detection monitor stopped")

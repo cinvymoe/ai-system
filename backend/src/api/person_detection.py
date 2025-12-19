@@ -143,8 +143,11 @@ async def stop_person_detection():
         Status message
     """
     try:
-        # Get existing monitor instance (if any)
-        from src.scheduler.person_detector import _detection_monitor_instance
+        # Get existing monitor instance from factory module
+        try:
+            from scheduler.detection.factory import _detection_monitor_instance
+        except ImportError:
+            from src.scheduler.detection.factory import _detection_monitor_instance
         
         if _detection_monitor_instance is None:
             return {
@@ -172,7 +175,10 @@ async def get_person_detection_status():
         Current monitor status
     """
     try:
-        from src.scheduler.person_detector import _detection_monitor_instance
+        try:
+            from scheduler.detection.factory import _detection_monitor_instance
+        except ImportError:
+            from src.scheduler.detection.factory import _detection_monitor_instance
         
         if _detection_monitor_instance is None:
             return PersonDetectionStatus(
@@ -201,7 +207,10 @@ async def trigger_detection_now():
         Status message
     """
     try:
-        from src.scheduler.person_detector import _detection_monitor_instance
+        try:
+            from scheduler.detection.factory import _detection_monitor_instance
+        except ImportError:
+            from src.scheduler.detection.factory import _detection_monitor_instance
         
         if _detection_monitor_instance is None:
             raise HTTPException(

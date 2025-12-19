@@ -115,8 +115,9 @@ class DataManager:
         # 定时器任务
         self._timer_task: Optional[asyncio.Task] = None
         
-        # 锁（保护 _current_message）
-        self._lock = asyncio.Lock()
+        # 锁（保护 _current_message）- 延迟初始化以避免事件循环绑定问题
+        self._lock: Optional[asyncio.Lock] = None
+        self._lock_loop: Optional[asyncio.AbstractEventLoop] = None
         
         # 统计信息
         self._stats = {
@@ -129,6 +130,19 @@ class DataManager:
         }
         
         logger.info("DataManager initialized")
+    
+    def _get_lock(self) -> asyncio.Lock:
+        """获取锁，延迟初始化以确保在正确的事件循环中创建"""
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+        
+        # 如果锁不存在，或者当前事件循环与锁绑定的循环不同，重新创建锁
+        if self._lock is None or (current_loop is not None and self._lock_loop is not current_loop):
+            self._lock = asyncio.Lock()
+            self._lock_loop = current_loop
+        return self._lock
     
     def register_message_callback(
         self,
@@ -243,7 +257,7 @@ class DataManager:
         Args:
             message: 接收到的消息
         """
-        async with self._lock:
+        async with self._get_lock():
             try:
                 self._stats["messages_received"] += 1
                 
@@ -415,7 +429,7 @@ class DataManager:
             # 等待消息持续时间
             await asyncio.sleep(self.MESSAGE_DURATION)
             
-            async with self._lock:
+            async with self._get_lock():
                 if self._current_message:
                     logger.debug(
                         f"Message expired: type={self._current_message.message_type}, "
@@ -462,7 +476,7 @@ class DataManager:
         """关闭数据管理器，清理资源"""
         logger.info("Shutting down DataManager")
         
-        async with self._lock:
+        async with self._get_lock():
             # 取消定时器
             if self._timer_task:
                 if not self._timer_task.done():

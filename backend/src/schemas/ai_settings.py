@@ -12,6 +12,7 @@ class Point(BaseModel):
 
 class AISettingsBase(BaseModel):
     """Base schema for AI Settings"""
+    enabled: bool = Field(True, description="是否启用AI检测")
     camera_id: Optional[str] = Field(None, description="绑定的摄像头ID")
     camera_name: Optional[str] = Field(None, description="摄像头名称")
     camera_url: Optional[str] = Field(None, description="摄像头URL")
@@ -31,6 +32,7 @@ class AISettingsCreate(AISettingsBase):
 
 class AISettingsUpdate(BaseModel):
     """Schema for updating AI Settings (all fields optional)"""
+    enabled: Optional[bool] = None
     camera_id: Optional[str] = None
     camera_name: Optional[str] = None
     camera_url: Optional[str] = None
