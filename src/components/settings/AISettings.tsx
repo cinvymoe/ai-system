@@ -1,9 +1,10 @@
-import { ArrowLeft, Brain, AlertTriangle, CheckCircle2, Camera, ChevronDown, Save, Power } from 'lucide-react';
+import { ArrowLeft, Brain, AlertTriangle, CheckCircle2, Camera, ChevronDown, Power } from 'lucide-react';
+import { ZoneManagement } from '../ZoneManagement';
 import { useState, useEffect } from 'react';
 import { Switch } from '../ui/switch';
 import { Slider } from '../ui/slider';
 import { cameraService, Camera as CameraType } from '../../services/cameraService';
-import { aiSettingsService, AISettings as AISettingsType } from '../../services/aiSettingsService';
+import { aiSettingsService } from '../../services/aiSettingsService';
 
 interface AISettingsProps {
   onBack: () => void;
@@ -313,6 +314,20 @@ export function AISettings({ onBack }: AISettingsProps) {
             </div>
           </div>
         </div>
+
+        {/* 区域管理 */}
+        {selectedCameraId && (
+          <div className="bg-slate-800 border border-slate-700 rounded-lg p-6">
+            <h3 className="text-slate-100 mb-4 flex items-center gap-2">
+              <Camera className="size-5 text-cyan-500" />
+              警报区域设置
+            </h3>
+            <div className="text-slate-400 text-sm mb-4">
+              在摄像头画面上绘制警告区域和报警区域，AI检测到目标进入这些区域时会触发相应级别的警报。
+            </div>
+            <ZoneManagement cameraId={selectedCameraId} />
+          </div>
+        )}
 
         {/* 报警设置 */}
         <div className="bg-slate-800 border border-slate-700 rounded-lg p-6">

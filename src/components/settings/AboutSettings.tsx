@@ -29,9 +29,9 @@ export function AboutSettings({ onBack }: AboutSettingsProps) {
               <Shield className="size-8 text-white" />
             </div>
             <div className="flex-1">
-              <h3 className="text-slate-100 text-xl mb-2">龙门吊视觉安全监控系统</h3>
+              <h3 className="text-slate-100 text-xl mb-2">起重机视觉安全监控系统</h3>
               <p className="text-slate-400">
-                专为龙门吊和门座机驾驶员打造的一体化智能监控解决方案
+                专为起重机驾驶员打造的一体化智能监控解决方案
               </p>
             </div>
           </div>
@@ -130,7 +130,7 @@ export function AboutSettings({ onBack }: AboutSettingsProps) {
         <div className="bg-slate-800 border border-slate-700 rounded-lg p-6">
           <h3 className="text-slate-100 mb-4">版权信息</h3>
           <p className="text-slate-400 text-sm leading-relaxed">
-            © 2025 工业安全监控系统。保留所有权利。<br />
+            © 2025 工业安全监控系统。宜昌市创星电子技术发展有限公司保留所有权利。<br />
             本系统专为工业作业环境设计，未经授权不得用于其他用途。
           </p>
         </div>
@@ -141,15 +141,11 @@ export function AboutSettings({ onBack }: AboutSettingsProps) {
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-slate-400">服务热线:</span>
-              <span className="text-slate-200">400-888-8888</span>
+              <span className="text-slate-200">+8617714186930</span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-400">技术邮箱:</span>
-              <span className="text-slate-200">support@example.com</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">在线文档:</span>
-              <span className="text-cyan-500">docs.example.com</span>
+              <span className="text-slate-200">support@equiprise.com</span>
             </div>
           </div>
         </div>

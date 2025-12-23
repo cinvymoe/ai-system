@@ -377,7 +377,7 @@ export default function App() {
         
         <div className="absolute left-1/2 transform -translate-x-1/2 flex items-center gap-3">
           <div className="w-2 h-2 bg-cyan-500 rounded-full animate-pulse shadow-lg shadow-cyan-500/50"></div>
-          <h1 className="text-slate-100 text-xl tracking-wide font-semibold">龙门吊视觉安全监控系统</h1>
+          <h1 className="text-slate-100 text-xl tracking-wide font-semibold">起重机视觉安全监控系统</h1>
           <div className="w-2 h-2 bg-cyan-500 rounded-full animate-pulse shadow-lg shadow-cyan-500/50"></div>
         </div>
 
